@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 API_TOKEN = "8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ"
 ADMIN_ID = 6218936231
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
-WEBHOOK_URL = "https://your-app-name.onrender.com" + WEBHOOK_PATH  # Замените на ваш URL
+WEBHOOK_URL = "https://ayuoin.onrender.com" + WEBHOOK_PATH  # Замените на ваш URL
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
