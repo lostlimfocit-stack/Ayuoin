@@ -1,12 +1,14 @@
 import asyncio
 import json
+import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiohttp import web
 
-API_TOKEN ="8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ"
-ADMIN_ID = 6218936231  # твой айди
+API_TOKEN = os.getenv("API_TOKEN", "8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ")
+ADMIN_ID = int(os.getenv("ADMIN_ID", 6218936231))  # твой айди
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
@@ -16,7 +18,6 @@ def load_data():
     try:
         with open("balances.json", "r") as f:
             data = json.load(f)
-            # Создаём ключи, если их нет
             if "balances" not in data:
                 data["balances"] = {}
             if "usernames" not in data:
@@ -46,7 +47,7 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Отправить °.•🎀", callback_data="send")]
 ])
 
-# --- Старт с поддержкой промокода ---
+# --- Старт ---
 @dp.message(F.text.startswith("/start"))
 async def start(message: types.Message):
     user_id = str(message.from_user.id)
@@ -180,8 +181,23 @@ async def show_promos(message: types.Message):
         text += f"- {code} : +{reward} аюоинов\n"
     await message.answer(text)
 
+# --- Web server-заглушка для Render ---
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_app():
+    app = web.Application()
+    app.add_routes([web.get("/", handle)])
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 # --- Запуск ---
 async def main():
+    # запускаем web-сервер + polling параллельно
+    asyncio.create_task(start_web_app())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
