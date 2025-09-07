@@ -1,80 +1,186 @@
-import logging
-import sqlite3
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
 import asyncio
+import json
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_TOKEN = 8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ
+API_TOKEN ="8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ"
+ADMIN_ID = 6218936231  # твой айди
 
-ADMIN_ID = 6218936231
-
-logging.basicConfig(level=logging.INFO)
-
-# Создаём бота и диспетчер
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Подключаем SQLite
-conn = sqlite3.connect("balances.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    balance INTEGER
-)
-""")
-conn.commit()
-
-def get_balance(user_id: int):
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    return row[0] if row else None
-
-def set_balance(user_id: int, balance: int):
-    cursor.execute("INSERT OR REPLACE INTO users (user_id, balance) VALUES (?, ?)", (user_id, balance))
-    conn.commit()
-
-def add_coins(user_id: int, amount: int):
-    bal = get_balance(user_id)
-    if bal is None:
-        set_balance(user_id, amount)
-    else:
-        set_balance(user_id, bal + amount)
-
-# /start
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
-    if get_balance(user_id) is None:
-        set_balance(user_id, 25)
-    await message.answer(f"Привет, {message.from_user.first_name}! 🎉\n"
-                         f"На твой счёт зачислено 25 аюойнов.\n"
-                         f"Напиши /balance чтобы проверить баланс.")
-
-# /balance
-@dp.message(Command("balance"))
-async def cmd_balance(message: types.Message):
-    user_id = message.from_user.id
-    bal = get_balance(user_id)
-    if bal is None:
-        bal = 0
-    await message.answer(f"Твой баланс: {bal} аюойнов 🪙")
-
-# /give user_id amount
-@dp.message(Command("give"))
-async def cmd_give(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return await message.answer("У тебя нет прав на эту команду.")
+# --- Работа с JSON ---
+def load_data():
     try:
-        parts = message.text.split()
-        user_id = int(parts[1])
-        amount = int(parts[2])
-        add_coins(user_id, amount)
-        await message.answer(f"Выдано {amount} аюойнов пользователю {user_id}.")
-    except Exception:
-        await message.answer("Использование: /give user_id количество\nПример: /give 123456789 25")
+        with open("balances.json", "r") as f:
+            data = json.load(f)
+            # Создаём ключи, если их нет
+            if "balances" not in data:
+                data["balances"] = {}
+            if "usernames" not in data:
+                data["usernames"] = {}
+            if "used_promos" not in data:
+                data["used_promos"] = {}
+            if "promocodes" not in data:
+                data["promocodes"] = {}
+            return data
+    except:
+        return {"balances": {}, "usernames": {}, "used_promos": {}, "promocodes": {}}
 
-# Запуск
+def save_data(data):
+    with open("balances.json", "w") as f:
+        json.dump(data, f)
+
+data = load_data()
+
+# --- FSM для перевода ---
+class Transfer(StatesGroup):
+    waiting_for_user = State()
+    waiting_for_amount = State()
+
+# --- Кнопки ---
+main_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Баланс °.•🎀", callback_data="balance")],
+    [InlineKeyboardButton(text="Отправить °.•🎀", callback_data="send")]
+])
+
+# --- Старт с поддержкой промокода ---
+@dp.message(F.text.startswith("/start"))
+async def start(message: types.Message):
+    user_id = str(message.from_user.id)
+    username = message.from_user.username
+    args = message.text.split()
+
+    if user_id not in data["balances"]:
+        data["balances"][user_id] = 25
+    if username:
+        data["usernames"][username.lower()] = user_id
+
+    # Проверка промокода
+    if len(args) > 1:
+        code = args[1]
+        if code in data["promocodes"] and user_id not in data["used_promos"].get(code, []):
+            reward = data["promocodes"][code]
+            data["balances"][user_id] += reward
+            data["used_promos"].setdefault(code, []).append(user_id)
+            save_data(data)
+            await message.answer(f"✨ Промокод '{code}' активирован! +{reward} аюоинов 🌸")
+
+    save_data(data)
+
+    text = (
+        "Добро пожаловать!\n"
+        "Я аюоин, валюта tg канала: @ayuolmaoo (⁠.⁠❛⁠ᴗ⁠❛⁠.)\n\n"
+        "Благодаря мне можно:\n"
+        "Обменивать, продавать, покупать персонажей ;\n\n"
+        "🎀 Проверь свой баланс или отправь аюоины другу!"
+    )
+    await message.answer(text, reply_markup=main_menu)
+
+# --- Баланс ---
+@dp.callback_query(F.data == "balance")
+async def balance(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    bal = data["balances"].get(user_id, 0)
+    await callback.message.answer(f"Твой баланс... {bal} аюоинов! 💖")
+
+# --- Отправить ---
+@dp.callback_query(F.data == "send")
+async def send(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "Отправьте другому человеку аюоины ^^ ~\n"
+        "Для этого напишите его @юзернейм 💕"
+    )
+    await state.set_state(Transfer.waiting_for_user)
+
+@dp.message(Transfer.waiting_for_user)
+async def process_user(message: types.Message, state: FSMContext):
+    username = message.text.lstrip("@").lower()
+    if username not in data["usernames"]:
+        await message.answer("Такого пользователя нет... 🥺")
+        return
+    await state.update_data(receiver=username)
+    await message.answer("Введите число аюоинов для перевода ✨")
+    await state.set_state(Transfer.waiting_for_amount)
+
+@dp.message(Transfer.waiting_for_amount)
+async def process_amount(message: types.Message, state: FSMContext):
+    try:
+        amount = int(message.text)
+    except:
+        await message.answer("Введите число!")
+        return
+
+    sender_id = str(message.from_user.id)
+    user_data = await state.get_data()
+    receiver_username = user_data["receiver"]
+    receiver_id = data["usernames"][receiver_username]
+
+    if data["balances"].get(sender_id, 0) < amount:
+        await message.answer("Недостаточно аюоинов 💔")
+        await state.clear()
+        return
+
+    # Перевод
+    data["balances"][sender_id] -= amount
+    data["balances"][receiver_id] = data["balances"].get(receiver_id, 0) + amount
+    save_data(data)
+
+    # Сообщения
+    await message.answer(
+        f"Вы отправили @{receiver_username} {amount} аюоинов! ^^ спасибо! 🎀"
+    )
+    try:
+        await bot.send_message(
+            receiver_id,
+            f"Пользователь @{message.from_user.username} отправил вам {amount} аюоинов! Спасибо ^^~ 💕"
+        )
+    except:
+        pass
+
+    await state.clear()
+
+# --- Создание нового промокода (только админ) ---
+@dp.message(F.text.startswith("/newpromo"))
+async def new_promo(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("Формат: /newpromo название число")
+        return
+    code, reward = parts[1], parts[2]
+    try:
+        reward = int(reward)
+    except:
+        await message.answer("Нужно указать число награды!")
+        return
+
+    data["promocodes"][code] = reward
+    save_data(data)
+
+    link = f"https://t.me/Ayuoin_bot?start={code}"
+    await message.answer(
+        f"✨ Промокод создан: '{code}' (+{reward} аюоинов)\n"
+        f"Ссылка для активации: {link}"
+    )
+
+# --- Просмотр активных промокодов (только админ) ---
+@dp.message(F.text.startswith("/promos"))
+async def show_promos(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    if not data["promocodes"]:
+        await message.answer("Нет активных промокодов 🌸")
+        return
+    text = "Активные промокоды:\n"
+    for code, reward in data["promocodes"].items():
+        text += f"- {code} : +{reward} аюоинов\n"
+    await message.answer(text)
+
+# --- Запуск ---
 async def main():
     await dp.start_polling(bot)
 
