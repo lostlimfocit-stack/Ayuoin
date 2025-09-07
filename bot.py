@@ -1,13 +1,23 @@
 import asyncio
 import json
 import time
+import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 API_TOKEN = "8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ"
 ADMIN_ID = 6218936231
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = "https://your-app-name.onrender.com" + WEBHOOK_PATH  # Замените на ваш URL
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
@@ -25,7 +35,7 @@ def load_data():
             if "promocodes" not in data:
                 data["promocodes"] = {}
             return data
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {"balances": {}, "usernames": {}, "used_promos": {}, "promocodes": {}}
 
 def save_data(data):
@@ -43,13 +53,12 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Отправить °.•🎀", callback_data="send")]
 ])
 
-@dp.message(F.text.startswith("/start"))
+@dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = str(message.from_user.id)
     username = message.from_user.username
     args = message.text.split()
 
-    # Автоматическое начисление 25 аюоинов новым пользователям
     if user_id not in data["balances"]:    
         data["balances"][user_id] = 25
         await message.answer("✨ Вам начислено 25 аюоинов за регистрацию! 🎀")
@@ -61,14 +70,23 @@ async def start(message: types.Message):
         code = args[1]    
         if code in data["promocodes"]:
             promo = data["promocodes"][code]
-            if time.time() - promo["created_at"] < 86400 and user_id not in data["used_promos"].get(code, []):    
-                reward = promo["reward"]    
-                data["balances"][user_id] += reward    
-                data["used_promos"].setdefault(code, []).append(user_id)    
-                save_data(data)    
-                await message.answer(f"✨ Промокод активирован! +{reward} аюоинов 🌸\nВаш баланс: {data['balances'][user_id]} аюоинов! 💖")
+            if time.time() - promo["created_at"] < 86400:
+                if user_id not in data["used_promos"].get(code, []):    
+                    reward = promo["reward"]    
+                    data["balances"][user_id] += reward    
+                    if "used_promos" not in data:
+                        data["used_promos"] = {}
+                    if code not in data["used_promos"]:
+                        data["used_promos"][code] = []
+                    data["used_promos"][code].append(user_id)    
+                    save_data(data)    
+                    await message.answer(f"✨ Промокод активирован! +{reward} аюоинов 🌸\nВаш баланс: {data['balances'][user_id]} аюоинов! 💖")
+                else:
+                    await message.answer("Вы уже использовали этот промокод 🎀")
             else:
-                await message.answer("Промокод недействителен или уже использован 🎀")
+                await message.answer("Промокод истёк 🎀")
+        else:
+            await message.answer("Промокод не найден 🎀")
 
     save_data(data)    
     text = (    
@@ -80,11 +98,10 @@ async def start(message: types.Message):
     )    
     await message.answer(text, reply_markup=main_menu)
 
-@dp.message(F.text.startswith("/balance"))
+@dp.message(Command("balance"))
 async def cmd_balance(message: types.Message):
     user_id = str(message.from_user.id)
     
-    # Проверка регистрации пользователя
     if user_id not in data["balances"]:
         await message.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀")
         return
@@ -92,11 +109,10 @@ async def cmd_balance(message: types.Message):
     bal = data["balances"].get(user_id, 0)
     await message.answer(f"Твой баланс... {bal} аюоинов! 💖")
 
-@dp.message(F.text.startswith("/send"))
+@dp.message(Command("send"))
 async def cmd_send(message: types.Message):
     user_id = str(message.from_user.id)
     
-    # Проверка регистрации пользователя
     if user_id not in data["balances"]:
         await message.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀")
         return
@@ -134,27 +150,26 @@ async def cmd_send(message: types.Message):
             f"Пользователь @{message.from_user.username} отправил вам {amount} аюоинов! Спасибо ^^~ 💕"
         )
     except:
-        pass
+        await message.answer("Не удалось уведомить получателя, но перевод выполнен 🎀")
 
 @dp.callback_query(F.data == "balance")
-async def balance(callback: types.CallbackQuery):
+async def balance_callback(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
     
-    # Проверка регистрации пользователя
     if user_id not in data["balances"]:
-        await callback.message.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀")
+        await callback.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀", show_alert=True)
         return
         
     bal = data["balances"].get(user_id, 0)
     await callback.message.answer(f"Твой баланс... {bal} аюоинов! 💖")
+    await callback.answer()
 
 @dp.callback_query(F.data == "send")
-async def send(callback: types.CallbackQuery, state: FSMContext):
+async def send_callback(callback: types.CallbackQuery, state: FSMContext):
     user_id = str(callback.from_user.id)
     
-    # Проверка регистрации пользователя
     if user_id not in data["balances"]:
-        await callback.message.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀")
+        await callback.answer("Сначала нажмите /start чтобы зарегистрироваться 🎀", show_alert=True)
         return
         
     await callback.message.answer(
@@ -162,6 +177,7 @@ async def send(callback: types.CallbackQuery, state: FSMContext):
         "Для этого напишите его @юзернейм 💕"
     )
     await state.set_state(Transfer.waiting_for_user)
+    await callback.answer()
 
 @dp.message(Transfer.waiting_for_user)
 async def process_user(message: types.Message, state: FSMContext):
@@ -202,22 +218,25 @@ async def process_amount(message: types.Message, state: FSMContext):
             f"Пользователь @{message.from_user.username} отправил вам {amount} аюоинов! Спасибо ^^~ 💕"    
         )    
     except:    
-        pass    
+        await message.answer("Не удалось уведомить получателя, но перевод выполнен 🎀")
 
     await state.clear()
 
-@dp.message(F.text.startswith("/newpromo"))
+@dp.message(Command("newpromo"))
 async def new_promo(message: types.Message):
     if message.from_user.id != ADMIN_ID:
+        await message.answer("Недостаточно прав 🎀")
         return
+        
     parts = message.text.split()
     if len(parts) != 3:
         await message.answer("Формат: /newpromo название число")
         return
+        
     code, reward = parts[1], parts[2]
     try:
         reward = int(reward)
-    except:
+    except ValueError:
         await message.answer("Нужно указать число награды!")
         return
 
@@ -230,23 +249,69 @@ async def new_promo(message: types.Message):
         f"Ссылка на промокод: {link}"    
     )
 
-@dp.message(F.text.startswith("/promos"))
+@dp.message(Command("promos"))
 async def show_promos(message: types.Message):
     if message.from_user.id != ADMIN_ID:
+        await message.answer("Недостаточно прав 🎀")
         return
+        
     if not data["promocodes"]:
         await message.answer("Нет активных промокодов 🌸")
         return
+        
     text = "Активные промокоды:\n"
+    current_time = time.time()
+    expired_promos = []
+    
     for code, promo in data["promocodes"].items():
-        time_left = 86400 - (time.time() - promo["created_at"])
-        hours_left = int(time_left // 3600)
-        minutes_left = int((time_left % 3600) // 60)
-        text += f"- {code} : +{promo['reward']} аюоинов (осталось: {hours_left}ч {minutes_left}м)\n"
+        time_passed = current_time - promo["created_at"]
+        if time_passed < 86400:
+            time_left = 86400 - time_passed
+            hours_left = int(time_left // 3600)
+            minutes_left = int((time_left % 3600) // 60)
+            text += f"- {code} : +{promo['reward']} аюоинов (осталось: {hours_left}ч {minutes_left}м)\n"
+        else:
+            expired_promos.append(code)
+    
+    for code in expired_promos:
+        del data["promocodes"][code]
+    
+    if expired_promos:
+        save_data(data)
+        text += f"\n🗑 Удалено {len(expired_promos)} истёкших промокодов"
+    
     await message.answer(text)
 
-async def main():
+async def on_startup(bot: Bot) -> None:
+    await bot.set_webhook(WEBHOOK_URL)
+    logger.info("Бот запущен с webhook! 🎀")
+
+async def on_shutdown(bot: Bot) -> None:
+    await bot.delete_webhook()
+    logger.info("Бот остановлен! 🎀")
+
+async def main_webhook():
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    app = web.Application()
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+    
+    return app
+
+async def main_polling():
+    logger.info("Бот запущен в режиме polling! 🎀")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Для Render используем webhook, для локального тестирования - polling
+    import os
+    if os.getenv("RENDER"):
+        web.run_app(main_webhook(), host="0.0.0.0", port=10000)
+    else:
+        asyncio.run(main_polling())
