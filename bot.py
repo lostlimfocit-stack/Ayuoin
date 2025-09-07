@@ -68,3 +68,39 @@ async def start(message: types.Message):
             promo = data["promocodes"][code]
             if time.time() - promo["created_at"] < 86400:
                 if user
+import asyncio
+import os
+import logging
+from aiohttp import web
+from aiogram import Bot, Dispatcher
+
+# твой токен
+API_TOKEN = "ТВОЙ_ТОКЕН"
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+
+# --- тут твои хендлеры dp.message / dp.callback_query и т.д. ---
+
+# Минимальный вебсервер (Render требует открытый порт)
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def start_webserver():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))  # Render даёт порт в переменной окружения
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+async def start_bot():
+    await dp.start_polling(bot)
+
+async def main():
+    await asyncio.gather(start_webserver(), start_bot())
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
