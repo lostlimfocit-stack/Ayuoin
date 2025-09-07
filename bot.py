@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_TOKEN = "ВАШ_ТОКЕН"
+API_TOKEN = "8458016571:AAFQpM-UjHR2nneYhwgDHECQILulwGTtapQ"
 ADMIN_ID = 6218936231  # твой айди
 
 bot = Bot(token=API_TOKEN)
