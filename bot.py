@@ -17,20 +17,11 @@ dp = Dispatcher()
 def load_data():
     try:
         with open("balances.json", "r") as f:
-            data = json.load(f)
-            if "balances" not in data:
-                data["balances"] = {}
-            if "usernames" not in data:
-                data["usernames"] = {}
-            if "used_promos" not in data:
-                data["used_promos"] = {}
-            if "promocodes" not in data:
-                data["promocodes"] = {}
-            return data
+            return json.load(f)
     except:
         return {"balances": {}, "usernames": {}, "used_promos": {}, "promocodes": {}}
 
-def save_data(data):
+def save_data():
     with open("balances.json", "w") as f:
         json.dump(data, f)
 
@@ -54,23 +45,29 @@ async def start(message: types.Message):
     username = message.from_user.username
     args = message.text.split()
 
+    # --- Первый вход ---
     if user_id not in data["balances"]:
-        data["balances"][user_id] = 25
+        data["balances"][user_id] = 25  # подарок
+        save_data()
+
+    # Сохраняем username
     if username:
         data["usernames"][username.lower()] = user_id
+        save_data()
 
-    # Проверка промокода
+    # --- Проверка промокода ---
     if len(args) > 1:
         code = args[1]
         if code in data["promocodes"] and user_id not in data["used_promos"].get(code, []):
             reward = data["promocodes"][code]
             data["balances"][user_id] += reward
             data["used_promos"].setdefault(code, []).append(user_id)
-            save_data(data)
-            await message.answer(f"✨ Промокод '{code}' активирован! +{reward} аюоинов 🌸")
+            save_data()
+            await message.answer("ура! промокод активировался! Поздравляю💝")
+        else:
+            await message.answer("Такой промокод уже был использован или не существует 🥺")
 
-    save_data(data)
-
+    # --- Главное сообщение ---
     text = (
         "Добро пожаловать!\n"
         "Я аюоин, валюта tg канала: @ayuolmaoo (⁠.⁠❛⁠ᴗ⁠❛⁠.)\n\n"
@@ -119,6 +116,7 @@ async def process_amount(message: types.Message, state: FSMContext):
     receiver_username = user_data["receiver"]
     receiver_id = data["usernames"][receiver_username]
 
+    # Проверка баланса
     if data["balances"].get(sender_id, 0) < amount:
         await message.answer("Недостаточно аюоинов 💔")
         await state.clear()
@@ -127,7 +125,7 @@ async def process_amount(message: types.Message, state: FSMContext):
     # Перевод
     data["balances"][sender_id] -= amount
     data["balances"][receiver_id] = data["balances"].get(receiver_id, 0) + amount
-    save_data(data)
+    save_data()
 
     # Сообщения
     await message.answer(
@@ -160,7 +158,7 @@ async def new_promo(message: types.Message):
         return
 
     data["promocodes"][code] = reward
-    save_data(data)
+    save_data()
 
     link = f"https://t.me/Ayuoin_bot?start={code}"
     await message.answer(
@@ -196,8 +194,7 @@ async def start_web_app():
 
 # --- Запуск ---
 async def main():
-    # запускаем web-сервер + polling параллельно
-    asyncio.create_task(start_web_app())
+    asyncio.create_task(start_web_app())  # Запускаем web-заглушку
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
